@@ -1,0 +1,65 @@
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Body,
+  Param,
+} from '@nestjs/common';
+import { RadiologistsService } from './radiologists.service';
+import { Radiologist } from './radiologist.entity';
+
+@Controller('radiologists')
+export class RadiologistsController {
+  constructor(private readonly radiologistsService: RadiologistsService) {}
+
+  /**
+   * GET /api/radiologists
+   * Get all radiologists
+   */
+  @Get()
+  async findAll(): Promise<Radiologist[]> {
+    return this.radiologistsService.findAll();
+  }
+
+  /**
+   * GET /api/radiologists/:id
+   * Get radiologist by ID
+   */
+  @Get(':id')
+  async findOne(@Param('id') id: string): Promise<Radiologist> {
+    return this.radiologistsService.findOne(id);
+  }
+
+  /**
+   * PUT /api/radiologists/:id/status
+   * Update radiologist status
+   */
+  @Put(':id/status')
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() data: { status: string },
+  ) {
+    await this.radiologistsService.updateStatus(id, data.status);
+    return { success: true };
+  }
+
+  /**
+   * POST /api/radiologists/:id/reset-rvu
+   * Reset RVU counter (start of new shift)
+   */
+  @Post(':id/reset-rvu')
+  async resetRVU(@Param('id') id: string) {
+    await this.radiologistsService.resetRVU(id);
+    return { success: true };
+  }
+
+  /**
+   * GET /api/radiologists/:id/workload
+   * Get current workload statistics
+   */
+  @Get(':id/workload')
+  async getWorkload(@Param('id') id: string) {
+    return this.radiologistsService.getWorkload(id);
+  }
+}
