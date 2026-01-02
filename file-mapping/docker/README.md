@@ -2,7 +2,7 @@
 
 ## Files to Add
 
-Copy these files from the artifacts:
+Copy these files from the folders:
 
 - `docker-compose.yml` - Orchestrates all services
 - `init-db.sql` - Database schema and seed data
