@@ -2,7 +2,7 @@
 
 ## Files to Add
 
-Copy these files from the artifacts:
+Copy these files from the folders:
 
 - `RadiologyOrchestrationAgent.csproj` - Project file
 - `Program.cs` - Entry point
