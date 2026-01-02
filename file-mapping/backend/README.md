@@ -2,7 +2,7 @@
 
 ## Files to Add
 
-Copy these files from the artifacts into the following locations:
+Copy these files from the folders into the following locations:
 
 ### Core Files
 - `src/main.ts`
