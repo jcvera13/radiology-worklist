@@ -14,18 +14,17 @@ Install these before starting:
 ### Step 1: Clone Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/radiology-orchestration.git
-cd radiology-orchestration
+git clone https://github.com/YOUR_USERNAME/radiology-worklist.git
+cd radiology-worklist
 ```
 
 ### Step 2: Copy Artifact Files
 
 **Important:** The repository structure is created, but you need to copy the actual code from Claude's artifacts.
 
-1. Open the Claude conversation
-2. Find each artifact (there are ~35 total)
-3. Use `docs/FILE_MAPPING.md` to know where each goes
-4. Copy the artifact content into the corresponding file
+
+1. Use read in file mapping folders to map files to specified locations. 
+2. Copy folder content into the corresponding file
 
 **Automated Option:**
 If all artifacts are saved locally, run:
