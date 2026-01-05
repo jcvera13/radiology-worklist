@@ -21,23 +21,7 @@ export class RadiologistsController {
   async findAll(): Promise<Radiologist[]> {
     return this.radiologistsService.findAll();
   }
-  /**
-   * POST /api/radiologists/reset-all-rvu
-   * Reset RVU for ALL radiologists (admin function)
-   */
-  @Post('reset-all-rvu')
-  async resetAllRVU() {
-    const radiologists = await this.radiologistsService.findAll();
-  
-    for (const rad of radiologists) {
-      await this.radiologistsService.resetRVU(rad.id);
-    }
-  
-    return { 
-      success: true, 
-      message: `Reset RVU for ${radiologists.length} radiologists` 
-    };
-  }
+
   /**
    * GET /api/radiologists/:id
    * Get radiologist by ID
@@ -68,6 +52,23 @@ export class RadiologistsController {
   async resetRVU(@Param('id') id: string) {
     await this.radiologistsService.resetRVU(id);
     return { success: true };
+  }
+  /**
+   * POST /api/radiologists/reset-all-rvu
+   * Reset RVU for ALL radiologists (admin function)
+   */
+  @Post('reset-all-rvu')
+  async resetAllRVU() {
+    const radiologists = await this.radiologistsService.findAll();
+  
+    for (const rad of radiologists) {
+      await this.radiologistsService.resetRVU(rad.id);
+    }
+  
+    return { 
+      success: true, 
+      message: `Reset RVU for ${radiologists.length} radiologists` 
+    };
   }
   /**
    * GET /api/radiologists/:id/workload

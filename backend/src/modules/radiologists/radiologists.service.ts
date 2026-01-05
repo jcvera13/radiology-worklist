@@ -58,10 +58,21 @@ export class RadiologistsService {
    * Reset RVU counter (start of new shift)
    */
   async resetRVU(id: string): Promise<void> {
+    // Validate UUID format first
+    if (!id || id === 'id' || !this.isValidUUID(id)) {
+      throw new Error(`Invalid radiologist ID: ${id}`);
+    }
+
     const radiologist = await this.findOne(id);
     radiologist.currentShiftRVU = 0;
     await this.radiologistRepository.save(radiologist);
     await this.locksService.resetRVU(id);
+  }
+
+  // Add UUID validation helper
+  private isValidUUID(uuid: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(uuid);
   }
 
   /**

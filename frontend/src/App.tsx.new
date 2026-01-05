@@ -44,104 +44,82 @@ interface AuditLog {
   timestamp: Date;
 }
 
-// ==================== MOCK DATA & CONFIGURATION ====================
-const CPT_RVU_MAP: Record<string, number> = {
-  '71045': 0.78,  // Chest X-ray
-  '71046': 0.89,  // Chest X-ray, 2 views
-  '74177': 2.15,  // CT Abdomen
-  '70450': 1.89,  // CT Head
-  '72148': 2.44,  // MRI Lumbar Spine
-  '73721': 1.67,  // MRI Knee
-  '74183': 2.89,  // MRI Abdomen
-};
-
-const SUBSPECIALTIES = ['Chest', 'Neuro', 'MSK', 'Body', 'General'];
-
-const INITIAL_RADIOLOGISTS: Radiologist[] = [
-  { id: '11111111-1111-1111-1111-111111111111', name: 'Dr. Smith', subspecialties: ['Chest', 'General'], maxRVUPerShift: 50, currentShiftRVU: 0, status: 'available' },
-  { id: '22222222-2222-2222-2222-222222222222', name: 'Dr. Johnson', subspecialties: ['Neuro', 'General'], maxRVUPerShift: 45, currentShiftRVU: 0, status: 'available' },
-  { id: '33333333-3333-3333-3333-333333333333', name: 'Dr. Williams', subspecialties: ['MSK', 'Body', 'General'], maxRVUPerShift: 55, currentShiftRVU: 0, status: 'available' },
-  { id: '44444444-4444-4444-4444-444444444444', name: 'Dr. Brown', subspecialties: ['Body', 'General'], maxRVUPerShift: 50, currentShiftRVU: 0, status: 'available' },
-];
-
-// ==================== CORE ASSIGNMENT ALGORITHM ====================
-const assignExam = (
-  exam: Exam,
-  radiologists: Radiologist[],
-  assignments: Assignment[]
-): { radiologistId: string | null; reason: string } => {
-  
-  // Filter available radiologists on shift
-  const availableRads = radiologists.filter(r => 
-    r.status === 'available' && 
-    r.subspecialties.includes(exam.subspecialty)
-  );
-
-  if (availableRads.length === 0) {
-    return { radiologistId: null, reason: 'No available radiologists with matching subspecialty' };
-  }
-
-  // Sort by current shift RVU (ascending - fairness)
-  const sorted = [...availableRads].sort((a, b) => a.currentShiftRVU - b.currentShiftRVU);
-
-  // Find first radiologist who won't exceed max RVU
-  for (const rad of sorted) {
-    if (rad.currentShiftRVU + exam.rvuValue <= rad.maxRVUPerShift) {
-      return { radiologistId: rad.id, reason: `Assigned based on RVU fairness (current: ${rad.currentShiftRVU})` };
-    }
-  }
-
-  return { radiologistId: null, reason: 'All radiologists would exceed max RVU' };
-};
-
-// ==================== MOCK HL7 GENERATOR ====================
-const generateMockExam = (): Exam => {
-  const cptCodes = Object.keys(CPT_RVU_MAP);
-  const cptCode = cptCodes[Math.floor(Math.random() * cptCodes.length)];
-  const subspecialtyMap: Record<string, string> = {
-    '71045': 'Chest', '71046': 'Chest',
-    '74177': 'Body', '70450': 'Neuro',
-    '72148': 'MSK', '73721': 'MSK', '74183': 'Body'
-  };
-  
-  return {
-    id: `exam-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-    accessionNumber: `ACC${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
-    cptCode,
-    rvuValue: CPT_RVU_MAP[cptCode],
-    priority: ['routine', 'urgent', 'stat'][Math.floor(Math.random() * 3)] as any,
-    subspecialty: subspecialtyMap[cptCode] || 'General',
-    status: 'pending',
-    createdAt: new Date(),
-    patientMRN: `MRN${Math.floor(Math.random() * 1000000)}`,
-  };
-};
+// ==================== CONFIGURATION ====================
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+const WS_URL = process.env.REACT_APP_WS_URL || 'http://localhost:3001';
 
 // ==================== MAIN APP COMPONENT ====================
 export default function RadiologyOrchestration() {
   const [view, setView] = useState<'radiologist' | 'admin'>('admin');
-  const [currentUser, setCurrentUser] = useState<string>('rad1');
-  const [radiologists, setRadiologists] = useState<Radiologist[]>(INITIAL_RADIOLOGISTS);
+  const [currentUser, setCurrentUser] = useState<string>('');
+  const [radiologists, setRadiologists] = useState<Radiologist[]>([]);
   const [exams, setExams] = useState<Exam[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [auditLogs, setAuditLog] = useState<AuditLog[]>([]);
   const [autoAssign, setAutoAssign] = useState(true);
   const [lockPropagationTime, setLockPropagationTime] = useState<number>(0);
+  const [loading, setLoading] = useState(true);
   
-  // WebSocket state - MUST be declared before usage
+  // WebSocket state
   const [socket, setSocket] = useState<any>(null);
   const [agentConnected, setAgentConnected] = useState(false);
+  
+  const lockTimerRef = useRef<NodeJS.Timeout>();
 
-  const lockTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // ==================== FETCH RADIOLOGISTS FROM API ====================
+  useEffect(() => {
+    const fetchRadiologists = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/radiologists`);
+        const data = await response.json();
+        console.log('Fetched radiologists:', data);
+        setRadiologists(data);
+        
+        // Set first available radiologist as current user
+        if (data.length > 0) {
+          setCurrentUser(data[0].id);
+        }
+      } catch (error) {
+        console.error('Error fetching radiologists:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchRadiologists();
+  }, []);
+
+  // ==================== FETCH EXAMS FROM API ====================
+  useEffect(() => {
+    const fetchExams = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/exams`);
+        const data = await response.json();
+        setExams(data);
+      } catch (error) {
+        console.error('Error fetching exams:', error);
+      }
+    };
+    
+    fetchExams();
+    
+    // Poll for new exams every 5 seconds
+    const interval = setInterval(fetchExams, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   // ==================== WEBSOCKET CONNECTION ====================
   useEffect(() => {
-    const newSocket = io('http://localhost:3001', {
+    const newSocket = io(WS_URL, {
       query: { clientType: 'web' }
     });
 
     newSocket.on('connect', () => {
       console.log('Connected to backend WebSocket');
+    });
+
+    newSocket.on('disconnect', () => {
+      console.log('Disconnected from backend WebSocket');
     });
 
     newSocket.on('agent:status', (data: { online: boolean }) => {
@@ -151,19 +129,23 @@ export default function RadiologyOrchestration() {
 
     newSocket.on('ps:report-opened', (data: any) => {
       console.log('PowerScribe report opened:', data);
-      // Update UI to show exam is open in PowerScribe
       const { accessionNumbers } = data;
+      
+      // Update exam status to locked
       setExams(prev => prev.map(e => 
         e.accessionNumber === accessionNumbers 
-          ? { ...e, status: 'locked' as const }
+          ? { ...e, status: 'locked' as const, lockedAt: new Date() }
           : e
       ));
+      
+      addAuditLog('POWERSCRIBE', 'PS_REPORT_OPENED', `Report opened: ${accessionNumbers}`);
     });
 
     newSocket.on('ps:report-closed', (data: any) => {
       console.log('PowerScribe report closed:', data);
-      // Update UI based on report status
       const { accessionNumbers, status } = data;
+      
+      // Update exam status based on report status
       setExams(prev => prev.map(e => 
         e.accessionNumber === accessionNumbers 
           ? { 
@@ -176,6 +158,8 @@ export default function RadiologyOrchestration() {
             }
           : e
       ));
+      
+      addAuditLog('POWERSCRIBE', 'PS_REPORT_CLOSED', `Report closed: ${accessionNumbers} (${status})`);
     });
 
     newSocket.on('ps:user-logged-in', (data: any) => {
@@ -183,9 +167,23 @@ export default function RadiologyOrchestration() {
       addAuditLog(data.userName, 'PS_USER_LOGGED_IN', 'Logged into PowerScribe');
     });
 
+    newSocket.on('ps:user-logged-out', (data: any) => {
+      console.log('PowerScribe user logged out:', data.userName);
+      addAuditLog(data.userName, 'PS_USER_LOGGED_OUT', 'Logged out of PowerScribe');
+    });
+
     newSocket.on('ps:error', (data: any) => {
       console.error('PowerScribe error:', data);
       alert(`PowerScribe Error: ${data.message}`);
+    });
+
+    newSocket.on('exam:assigned', (data: any) => {
+      console.log('Exam assigned:', data);
+      // Refresh exams list
+      fetch(`${API_URL}/api/exams`)
+        .then(res => res.json())
+        .then(setExams)
+        .catch(console.error);
     });
 
     setSocket(newSocket);
@@ -227,6 +225,10 @@ export default function RadiologyOrchestration() {
     addAuditLog(rad?.name || radiologistId, 'LOCK_ACQUIRED', `Exam ${examId}`);
     
     // Auto-release lock after 30 seconds (timeout simulation)
+    if (lockTimerRef.current) {
+      clearTimeout(lockTimerRef.current);
+    }
+    
     lockTimerRef.current = setTimeout(() => {
       releaseLock(examId, radiologistId);
     }, 30000);
@@ -251,63 +253,58 @@ export default function RadiologyOrchestration() {
   }, [radiologists, addAuditLog]);
 
   // ==================== EXAM COMPLETION ====================
-  const completeExam = useCallback((examId: string, radiologistId: string) => {
+  const completeExam = useCallback(async (examId: string, radiologistId: string) => {
     const exam = exams.find(e => e.id === examId);
     if (!exam) return;
 
-    setExams(prev => prev.map(e => 
-      e.id === examId ? { ...e, status: 'completed', lockedBy: undefined } : e
-    ));
-    
-    const rad = radiologists.find(r => r.id === radiologistId);
-    addAuditLog(rad?.name || radiologistId, 'EXAM_COMPLETED', `Exam ${examId} (${exam.rvuValue} RVU)`);
-    
-    if (lockTimerRef.current) {
-      clearTimeout(lockTimerRef.current);
+    try {
+      // Call backend to complete exam
+      await fetch(`${API_URL}/api/exams/${examId}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ radiologistId })
+      });
+
+      // Update local state
+      setExams(prev => prev.map(e => 
+        e.id === examId ? { ...e, status: 'completed', lockedBy: undefined } : e
+      ));
+      
+      const rad = radiologists.find(r => r.id === radiologistId);
+      addAuditLog(rad?.name || radiologistId, 'EXAM_COMPLETED', `Exam ${exam.accessionNumber} (${exam.rvuValue} RVU)`);
+      
+      if (lockTimerRef.current) {
+        clearTimeout(lockTimerRef.current);
+      }
+    } catch (error) {
+      console.error('Error completing exam:', error);
+      alert('Failed to complete exam');
     }
   }, [exams, radiologists, addAuditLog]);
 
-  // ==================== AUTO-ASSIGNMENT ENGINE ====================
-  useEffect(() => {
-    if (!autoAssign) return;
-
-    const pendingExams = exams.filter(e => e.status === 'pending');
-    
-    pendingExams.forEach(exam => {
-      const { radiologistId, reason } = assignExam(exam, radiologists, assignments);
-      
-      if (radiologistId) {
-        // Update exam status
-        setExams(prev => prev.map(e => 
-          e.id === exam.id ? { ...e, status: 'assigned', assignedTo: radiologistId } : e
-        ));
-        
-        // Update radiologist RVU
-        setRadiologists(prev => prev.map(r => 
-          r.id === radiologistId ? { ...r, currentShiftRVU: r.currentShiftRVU + exam.rvuValue } : r
-        ));
-        
-        // Record assignment
-        setAssignments(prev => [...prev, {
-          examId: exam.id,
-          radiologistId,
-          timestamp: new Date(),
-          status: 'assigned',
-        }]);
-        
-        const rad = radiologists.find(r => r.id === radiologistId);
-        addAuditLog('SYSTEM', 'AUTO_ASSIGN', `${exam.accessionNumber} → ${rad?.name} (${reason})`);
-      } else {
-        addAuditLog('SYSTEM', 'ASSIGN_FAILED', `${exam.accessionNumber}: ${reason}`);
-      }
-    });
-  }, [exams, radiologists, assignments, autoAssign, addAuditLog]);
-
   // ==================== MOCK HL7 INGESTION ====================
-  const ingestMockExam = useCallback(() => {
-    const newExam = generateMockExam();
-    setExams(prev => [...prev, newExam]);
-    addAuditLog('HL7_INTERFACE', 'EXAM_INGESTED', `${newExam.accessionNumber} (CPT: ${newExam.cptCode}, RVU: ${newExam.rvuValue})`);
+  const ingestMockExam = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/hl7/mock-exam`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        // Refresh exams list
+        const examsResponse = await fetch(`${API_URL}/api/exams`);
+        const examsData = await examsResponse.json();
+        setExams(examsData);
+        
+        addAuditLog('HL7_INTERFACE', 'EXAM_INGESTED', 
+          `${data.exam.accessionNumber} (CPT: ${data.exam.cptCode}, RVU: ${data.exam.rvuValue})`);
+      }
+    } catch (error) {
+      console.error('Error ingesting exam:', error);
+      alert('Failed to ingest exam');
+    }
   }, [addAuditLog]);
 
   // ==================== PS ONE LAUNCH (REAL INTEGRATION) ====================
@@ -315,6 +312,11 @@ export default function RadiologyOrchestration() {
     // Check if desktop agent is connected
     if (!agentConnected) {
       alert('❌ Desktop agent not connected\n\nPlease start the RadWhere desktop agent on this workstation.');
+      return;
+    }
+    
+    if (!socket) {
+      alert('❌ WebSocket not connected');
       return;
     }
   
@@ -328,31 +330,97 @@ export default function RadiologyOrchestration() {
         return;
       }
       
-      // Lock exam locally (backend also locks it)
+      // Lock exam locally
       acquireLock(exam.id, exam.assignedTo || currentUser);
       
-      addAuditLog(currentUser, 'PS_ONE_LAUNCH', `Launching PowerScribe for ${exam.accessionNumber}`);
+      const rad = radiologists.find(r => r.id === currentUser);
+      addAuditLog(rad?.name || currentUser, 'PS_ONE_LAUNCH', 
+        `Launching PowerScribe for ${exam.accessionNumber}`);
     });
-  }, [socket, agentConnected, currentUser, acquireLock, addAuditLog]);
+  }, [socket, agentConnected, currentUser, acquireLock, radiologists, addAuditLog]);
 
   // ==================== ADMIN OVERRIDE ====================
-  const manualAssign = useCallback((examId: string, radiologistId: string) => {
-    const exam = exams.find(e => e.id === examId);
-    if (!exam) return;
+  const manualAssign = useCallback(async (examId: string, radiologistId: string) => {
+    try {
+      await fetch(`${API_URL}/api/exams/${examId}/manual-assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ radiologistId, adminActor: 'ADMIN' })
+      });
+      
+      // Refresh exams and radiologists
+      const [examsResponse, radsResponse] = await Promise.all([
+        fetch(`${API_URL}/api/exams`),
+        fetch(`${API_URL}/api/radiologists`)
+      ]);
+      
+      const [examsData, radsData] = await Promise.all([
+        examsResponse.json(),
+        radsResponse.json()
+      ]);
+      
+      setExams(examsData);
+      setRadiologists(radsData);
+      
+      const exam = examsData.find((e: Exam) => e.id === examId);
+      const rad = radsData.find((r: Radiologist) => r.id === radiologistId);
+      
+      if (exam && rad) {
+        addAuditLog('ADMIN', 'MANUAL_ASSIGN', `${exam.accessionNumber} → ${rad.name}`);
+      }
+    } catch (error) {
+      console.error('Error manually assigning exam:', error);
+      alert('Failed to assign exam');
+    }
+  }, [addAuditLog]);
 
-    setExams(prev => prev.map(e => 
-      e.id === examId ? { ...e, status: 'assigned', assignedTo: radiologistId } : e
-    ));
+  // ==================== SYSTEM RESET ====================
+  const resetSystem = useCallback(async () => {
+    if (!window.confirm('Are you sure you want to reset the entire system?')) {
+      return;
+    }
     
-    setRadiologists(prev => prev.map(r => 
-      r.id === radiologistId ? { ...r, currentShiftRVU: r.currentShiftRVU + exam.rvuValue } : r
-    ));
-    
-    const rad = radiologists.find(r => r.id === radiologistId);
-    addAuditLog('ADMIN', 'MANUAL_ASSIGN', `${exam.accessionNumber} → ${rad?.name}`);
-  }, [exams, radiologists, addAuditLog]);
+    try {
+      // Call backend to reset all RVUs
+      await fetch(`${API_URL}/api/radiologists/reset-all-rvu`, {
+        method: 'POST'
+      });
+      
+      // Refresh data
+      const [radsResponse, examsResponse] = await Promise.all([
+        fetch(`${API_URL}/api/radiologists`),
+        fetch(`${API_URL}/api/exams`)
+      ]);
+      
+      const [radsData, examsData] = await Promise.all([
+        radsResponse.json(),
+        examsResponse.json()
+      ]);
+      
+      setRadiologists(radsData);
+      setExams(examsData);
+      setAssignments([]);
+      
+      addAuditLog('ADMIN', 'SYSTEM_RESET', 'All shifts and RVUs reset');
+      alert('✅ System reset successfully');
+    } catch (error) {
+      console.error('Error resetting system:', error);
+      alert('Failed to reset system');
+    }
+  }, [addAuditLog]);
 
   // ==================== RENDER ====================
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <Activity className="w-16 h-16 mx-auto mb-4 text-blue-600 animate-spin" />
+          <p className="text-xl text-gray-600">Loading Radiology Orchestration System...</p>
+        </div>
+      </div>
+    );
+  }
+
   const currentRadiologist = radiologists.find(r => r.id === currentUser);
   const myExams = exams.filter(e => e.assignedTo === currentUser);
   const pendingExams = exams.filter(e => e.status === 'pending');
@@ -460,25 +528,7 @@ export default function RadiologyOrchestration() {
                   📨 Ingest Mock HL7 Exam
                 </button>
                 <button
-                  onClick={async () => {
-	            try {
-		      // Call backend to reset RVUs
-		      const response = await fetch('http://localhost:3001/api/radiologists/reset-all-rvu', {
-		        method: 'POST',
-		      });
-
-		      if (response.ok) {
-		        // Then reset frontend state
-                        setRadiologists(prev => prev.map(r => ({ ...r, currentShiftRVU: 0 })));
-                        setExams([]);
-                        setAssignments([]);
-                        addAuditLog('ADMIN', 'SYSTEM_RESET', 'All shifts and exams cleared');
-                      }
-		    } catch (error) {
-		      console.error('Reset failed:', error);
-		      alert('Failed to reset system');
-		    }
-	          }}
+                  onClick={resetSystem}
                   className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 rounded"
                 >
                   🔄 Reset System
@@ -550,6 +600,7 @@ export default function RadiologyOrchestration() {
                     <select
                       onChange={(e) => e.target.value && manualAssign(exam.id, e.target.value)}
                       className="border rounded px-3 py-1 text-sm"
+                      defaultValue=""
                     >
                       <option value="">Manual Assign...</option>
                       {radiologists.filter(r => r.status === 'available').map(rad => (
@@ -658,6 +709,7 @@ export default function RadiologyOrchestration() {
                                 : 'bg-gray-400 cursor-not-allowed text-white'
                             }`}
                             disabled={!agentConnected}
+                            title={!agentConnected ? 'Desktop agent not connected' : 'Open in PowerScribe One'}
                           >
                             <Play className="w-4 h-4" />
                             Open in PS One
